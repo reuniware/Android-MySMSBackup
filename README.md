@@ -2,6 +2,7 @@
 Development of application MySmsBackup (Exports SMSes to file or sync SMSes to Gmail account).
 
 Ce projet a été créé sous Android Studio. Il ne comporte, sur GitHub, que les fichiers .JAVA
+
 Une fois compilé et déployé, il permets de lancer une exportation des SMS vers un fichier texte sur le téléphone Android,
 et permets aussi de synchroniser les SMS avec un ou plusieurs comptes GMAIL.
 Au premier lancement, il y a création d'une base de données embarquée sur le téléphone, permettant de stocker les mots de
