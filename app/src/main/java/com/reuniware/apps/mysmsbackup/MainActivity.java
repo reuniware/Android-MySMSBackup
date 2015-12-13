@@ -726,7 +726,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
             getMmsMessages();
 
-            //store.getDefaultFolder().getFolder("MySmsBackup").appendMessages(messagesToSend);
+            store.getDefaultFolder().getFolder("MySmsBackup").appendMessages(messagesToSend);
 
             store.close();
 
