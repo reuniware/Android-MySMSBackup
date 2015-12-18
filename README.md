@@ -21,3 +21,5 @@ Je dois donc ajouter la fonction d'export vers un fichier XML et la fonction de 
 
 Il reste encore beaucoup de travail. Cette version est grosso-modo un draft de l'application finale qui devrait être
 développée dans les jours et semaines qui viennent.
+
+Autre fonctionnalité que je souhaite ajouter : Permettre la suppression des mots de passe Gmail stockés en base de données, ainsi que le cryptage de ces derniers.
