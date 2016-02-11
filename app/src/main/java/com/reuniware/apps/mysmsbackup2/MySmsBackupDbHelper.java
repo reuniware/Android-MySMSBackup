@@ -1,4 +1,4 @@
-package com.reuniware.apps.mysmsbackup;
+package com.reuniware.apps.mysmsbackup2;
 
 import android.content.Context;
 import android.database.Cursor;

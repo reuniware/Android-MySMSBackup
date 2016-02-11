@@ -1,4 +1,10 @@
-package com.reuniware.apps.mysmsbackup;
+package com.reuniware.apps.mysmsbackup2;
+/**
+ * MySmsBackup2 differs from MySmsBackup because it deletes any previous backups in label MySmsBackup on Gmail
+ * and then sends the current snapshot of all SMS's that are in folders Inbox and Sentbox on the mobile phone.
+ * (MySmsBackup sends each SMS in separate emails in label MySmsBackup on Gmail).
+ * MySmsBackup2 is a lot faster than MySmsBackup because it only sends one email to yourself and all SMS's in the body of the email.
+ */
 
 import android.accounts.Account;
 import android.accounts.AccountManager;
@@ -11,13 +17,11 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.ContactsContract;
-import android.provider.Telephony;
 import android.support.design.widget.FloatingActionButton;
 import android.support.design.widget.Snackbar;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.Toolbar;
 import android.text.InputType;
-import android.util.Base64;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.Menu;
@@ -35,21 +39,29 @@ import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
 import java.text.DateFormat;
-import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Collections;
-import java.util.Date;
 import java.util.Properties;
 
+import javax.activation.DataHandler;
+import javax.activation.DataSource;
+import javax.activation.FileDataSource;
 import javax.mail.FetchProfile;
+import javax.mail.Flags;
 import javax.mail.Folder;
 import javax.mail.Message;
+import javax.mail.Multipart;
 import javax.mail.Session;
 import javax.mail.Store;
 import javax.mail.internet.InternetAddress;
+import javax.mail.internet.MimeBodyPart;
 import javax.mail.internet.MimeMessage;
+import javax.mail.internet.MimeMultipart;
+
+import com.google.android.gms.ads.AdRequest;
+import com.google.android.gms.ads.AdView;
 
 public class MainActivity extends AppCompatActivity implements View.OnClickListener {
 
@@ -65,13 +77,18 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         Toolbar toolbar = (Toolbar) findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
 
-        FloatingActionButton fab = (FloatingActionButton) findViewById(R.id.fab);
+        /*FloatingActionButton fab = (FloatingActionButton) findViewById(R.id.fab);
         fab.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 Snackbar.make(view, "Contact us : reunisoft@gmail.com", Snackbar.LENGTH_LONG).setAction("Action", null).show();
             }
-        });
+        });*/
+
+        AdView mAdView = (AdView) findViewById(R.id.adView);
+        AdRequest.Builder adRequest = new AdRequest.Builder();
+        adRequest.addTestDevice("0C76BFEC06A6B036B743B85E20AE4F11");
+        mAdView.loadAd(adRequest.build());
 
         dbHelper = new MySmsBackupDbHelper(this);
 
@@ -81,7 +98,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         btnExportToGmail = (Button) findViewById(R.id.btnExportToGmail);
         btnExportToGmail.setOnClickListener(this);
 
-        ((TextView) findViewById(R.id.textViewExportFile)).setText(getMainLogFilePath());
+        ((TextView) findViewById(R.id.textViewExportFile)).setText(getMainExportFilePath());
 
         //ExpandableListView listViewEmails = (ExpandableListView) findViewById(R.id.listViewEmails);
         //ArrayAdapter<String> adapter = new ArrayAdapter<String>(MainActivity.this, android.R.layout.simple_expandable_list_item_1, emails);
@@ -163,7 +180,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 AlertDialog.Builder alertDialogBuilder = new AlertDialog.Builder(this);
                 alertDialogBuilder.setTitle("Confirmation");
                 alertDialogBuilder
-                        .setMessage("This will overwrite any previous export file. Click yes to export to file " + getMainLogFilePath())
+                        .setMessage("This will overwrite any previous export file. Click yes to export to file " + getMainExportFilePath())
                         .setCancelable(false)
                         .setPositiveButton("Yes",new DialogInterface.OnClickListener() {
                             public void onClick(DialogInterface dialog,int id) {
@@ -246,7 +263,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         //showToastMessage("Export started (" + lstAndroidSms.size() + " SMS)");
 
         try {
-            File myFile = new File(getMainLogFilePath());
+            File myFile = new File(getMainExportFilePath());
             if (myFile.exists()) {
                 myFile.delete();
             }
@@ -262,9 +279,9 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 bufferedWriter.write(getContactNameByPhoneNumber(androidSms.address) + " (" + androidSms.address + ")" + "\r\n");
 
                 if (androidSms.type.equals("1"))
-                    bufferedWriter.write("Reçu le   ");
+                    bufferedWriter.write("Received on   ");
                 else if (androidSms.type.equals("2"))
-                    bufferedWriter.write("Envoyé le ");
+                    bufferedWriter.write("Sent on       ");
                 bufferedWriter.write(androidSms.date + "\r\n");
 
                 bufferedWriter.write(androidSms.body + "\r\n");
@@ -276,12 +293,69 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             fileWriter.flush();
             fileWriter.close();
 
-            showOkDialog("Export OK", lstAndroidSms.size() + " SMS have been exported to file " + getMainLogFilePath());
+            showOkDialog("Export OK", lstAndroidSms.size() + " SMS have been exported to file " + getMainExportFilePath());
             //showToastMessage("Export done (" + lstAndroidSms.size() + " SMS)");
 
 
         } catch (Exception e) {
             Log.d(TAG, "ExportSmsToFile:" + e.toString());
+        }
+    }
+
+    private void ExportSmsToFileForGmail() {
+        //showToastMessage("Getting SMS for export");
+
+        ArrayList<AndroidSms> lstAndroidSms = getSmsMessages(SMS_TYPE.SMS_INBOX);
+        lstAndroidSms.addAll(getSmsMessages(SMS_TYPE.SMS_SENT));
+        Log.d(TAG, "nb sms = " + lstAndroidSms.size());
+
+        Collections.sort(lstAndroidSms, AndroidSms.compareByThreadId);
+        Collections.sort(lstAndroidSms, AndroidSms.compareByDate);
+        Collections.sort(lstAndroidSms, AndroidSms.compareByContactName);
+
+        //showToastMessage("Export started (" + lstAndroidSms.size() + " SMS)");
+
+        try {
+            File myFile = new File(getMainExportFilePathForGmail());
+            if (myFile.exists()) {
+                myFile.delete();
+            }
+            myFile.createNewFile();
+
+            FileWriter fileWriter = new FileWriter(myFile, true);
+            BufferedWriter bufferedWriter = new BufferedWriter(fileWriter);
+
+            for (int i=0;i<lstAndroidSms.size();i++) {
+                Log.d(TAG, "writing " + i);
+                AndroidSms androidSms = lstAndroidSms.get(i);
+                //bufferedWriter.write("TID=" + androidSms.thread_id + " ID=" + androidSms._id + "\r\n");
+
+                if (androidSms.type.equals("1"))
+                    bufferedWriter.write("Received from ");
+                else if (androidSms.type.equals("2"))
+                    bufferedWriter.write("Sent to       ");
+                bufferedWriter.write((getContactNameByPhoneNumber(androidSms.address) + " (" + androidSms.address + ")").trim()+ "\r\n");
+
+                if (androidSms.type.equals("1"))
+                    bufferedWriter.write("Received on   ");
+                else if (androidSms.type.equals("2"))
+                    bufferedWriter.write("Sent on       ");
+                bufferedWriter.write(androidSms.date + "\r\n");
+
+                bufferedWriter.write("[" + androidSms.body + "]\r\n");
+                bufferedWriter.write("\r\n");
+                bufferedWriter.flush();
+            }
+
+            //bufferedWriter.close();
+            fileWriter.flush();
+            fileWriter.close();
+
+            //showOkDialog("Export OK", lstAndroidSms.size() + " SMS have been exported to file " + getMainExportFilePathForGmail());
+            //showToastMessage("Export done (" + lstAndroidSms.size() + " SMS)");
+
+        } catch (Exception e) {
+            Log.d(TAG, "ExportSmsToFileForGmail:" + e.toString());
         }
     }
 
@@ -311,6 +385,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 .setCancelable(false);
         alertDialog = alertDialogBuilder.create();
         alertDialog.show();
+
     }
 
     public void hideWaitDialog() {
@@ -346,6 +421,276 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         Log.d(TAG, "getMmsMessages END");
     }
 
+
+
+    public String getContactNameByPhoneNumber(String address) {
+        Uri uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(address));
+        Cursor cs = this.getContentResolver().query(uri, new String[]{ContactsContract.PhoneLookup.DISPLAY_NAME}, ContactsContract.PhoneLookup.NUMBER + "='" + address + "'", null, null);
+        String name = "";
+        if (cs.getCount() > 0) {
+            cs.moveToFirst();
+            name = cs.getString(cs.getColumnIndex(ContactsContract.PhoneLookup.DISPLAY_NAME));
+        }
+        cs.close();
+        return name;
+    }
+
+    private String convertMillisecondsToDate(String value) {
+        String finalDateString = "";
+        try {
+            long milliSeconds = Long.parseLong(value);
+            DateFormat formatter = new SimpleDateFormat("dd/MM/yyyy HH:mm:ss.SSS");
+            Calendar calendar = Calendar.getInstance();
+            calendar.setTimeInMillis(milliSeconds);
+            finalDateString = formatter.format(calendar.getTime());
+            //Log.d(TAG, "date parsed =" + finalDateString);
+        } catch (Exception pe) {
+            Log.d(TAG, "date parsing exception:" + pe.toString());
+        }
+        return finalDateString;
+    }
+
+    public String getContacts() {
+        String finalResult = "";
+        Cursor cursor = getContentResolver().query(ContactsContract.CommonDataKinds.Phone.CONTENT_URI, null, null, null, null);
+        while (cursor.moveToNext()) {
+            String name = cursor.getString(cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME));
+            String phoneNumber = cursor.getString(cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER));
+            finalResult += name + ";" + phoneNumber + "\r\n";
+        }
+        cursor.close();
+        return finalResult;
+    }
+
+    public void gmailTest(final String currentSelectedEmail, String currentPassword) {
+
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                btnExportToGmail.setEnabled(false);
+            }
+        });
+
+        Properties props = new Properties();
+        props.setProperty("mail.imap.host", "imap.gmail.com");
+        props.setProperty("mail.imap.port", "993");
+        props.setProperty("mail.imap.socketFactory.class", "javax.net.ssl.SSLSocketFactory");
+        props.setProperty("mail.imap.socketFactory.fallback", "false");
+        props.setProperty("mail.store.protocol", "imap");
+
+        Session session = Session.getInstance(props);
+        //session.setDebug(true);
+        try {
+            Store store = session.getStore("imap");
+            store.connect("imap.gmail.com", 993, currentSelectedEmail, currentPassword);
+
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    showWaitDialog("Backup to Gmail (snapshot).", "Please wait while backup.");
+                }
+            });
+
+            boolean found = false;
+            Folder[] f = store.getDefaultFolder().list();
+            for (Folder fd : f) {
+                String folderName = fd.getFullName();
+                //Log.d(TAG, fd.getFullName());
+                if (folderName.equals("MySmsBackup")) {
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found) {
+                Log.d(TAG, "MySmsBackup folder has not been found.");
+                Log.d(TAG, "MySmsBackup folder will be created.");
+                boolean created = store.getDefaultFolder().getFolder("MySmsBackup").create(Folder.HOLDS_MESSAGES);
+                if (created)
+                    Log.d(TAG, "MySmsBackup folder has been created");
+            }
+
+            Message[] serverMessages = null;
+            Folder msb = null;
+            if (found) {
+                Log.d(TAG, "MySmsBackup folder has been found");
+
+                FetchProfile fp = new FetchProfile();
+                fp.add(FetchProfile.Item.CONTENT_INFO);
+                Log.d(TAG, "getting messages from server");
+                msb = store.getDefaultFolder().getFolder("MySmsBackup");
+                msb.open(Folder.READ_WRITE);
+                serverMessages = new MimeMessage[msb.getMessages().length];
+                serverMessages = msb.getMessages();
+                Log.d(TAG, "retrieved:" + serverMessages.length);
+                Log.d(TAG, "end of getting messages from server");
+            }
+
+            if (serverMessages.length>0){
+                //il y a au moins un fichiers sur le compte gmail dans le répertoire MySmsBackup
+                //dans ce cas on supprime tous les fichiers
+                int count = 0;
+                for (Message msg:serverMessages) {
+                    Log.d(TAG, "deleting existing message on server " + "#" + count);
+                    msg.setFlag(Flags.Flag.DELETED, true);
+                }
+            } else {
+                Log.d(TAG, "no message to delete on server");
+            }
+
+            ArrayList<AndroidSms> lstAndroidSms = getSmsMessages(SMS_TYPE.SMS_SENT);
+            lstAndroidSms.addAll(getSmsMessages(SMS_TYPE.SMS_INBOX));
+            final int nbmsg = lstAndroidSms.size();
+            Log.d(TAG, "nb sms inbox and sent = " + nbmsg);
+
+            Collections.sort(lstAndroidSms, AndroidSms.compareByThreadId);
+            Collections.sort(lstAndroidSms, AndroidSms.compareByDate);
+            Collections.sort(lstAndroidSms, AndroidSms.compareByContactName);
+
+            Log.d(TAG, "Will add one email with all SMSes to server");
+
+            msb.close(false);
+
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    hideWaitDialog();
+                    showWaitDialog("Backup to Gmail (snapshot).", "Generating export file.");
+                }
+            });
+
+            ExportSmsToFileForGmail();
+
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    hideWaitDialog();
+                    showWaitDialog("Backup to Gmail (snapshot).", "Preparing email to send.");
+                }
+            });
+
+            Message[] messagesToSend = new MimeMessage[1];
+            messagesToSend[0] = new MimeMessage(session);
+            messagesToSend[0].setFrom(new InternetAddress(currentSelectedEmail));
+            messagesToSend[0].setRecipient(Message.RecipientType.TO, new InternetAddress(currentSelectedEmail));
+            messagesToSend[0].setSubject("MySmsBackup : List of exported SMS's");
+            messagesToSend[0].setText("Here is the last list of exported SMS's");
+            //messagesToSend[0]
+
+            Log.d(TAG,"currentselectedemail="+ currentSelectedEmail);
+
+            MimeBodyPart mimeBodyPart = new MimeBodyPart();
+            String filename = getMainExportFilePathForGmail();
+            DataSource source = new FileDataSource(filename);
+            mimeBodyPart.setDataHandler(new DataHandler(source));
+            mimeBodyPart.setFileName(filename);
+            Multipart multipart = new MimeMultipart();
+            multipart.addBodyPart(mimeBodyPart);
+            messagesToSend[0].setContent(multipart);
+
+            //getMmsMessages();
+
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    hideWaitDialog();
+                    showWaitDialog("Backup to Gmail (snapshot).", "Sending email to : " + currentSelectedEmail + " (to label MySmsBackup).");
+                }
+            });
+
+            store.getDefaultFolder().getFolder("MySmsBackup").appendMessages(messagesToSend);
+
+            store.close();
+
+            /*runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                }
+            });*/
+
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    hideWaitDialog();
+                    showOkDialog("Backup to Gmail OK", "One email with " + nbmsg + " SMS's has been sent to " + currentSelectedEmail + " (to label MySmsBackup).");
+                }
+            });
+
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    btnExportToGmail.setEnabled(true);
+                }
+            });
+
+        } catch (Exception ex) {
+            Log.d(TAG, "001:" + ex.toString());
+
+            if (alertDialog != null)
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        hideWaitDialog();
+                    }
+                });
+
+            final String ex2str = ex.toString();
+
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    showOkDialog("Connection Error", "Please check your connection : " + ex2str.toString());
+                }
+            });
+
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    btnExportToGmail.setEnabled(true);
+                }
+            });
+
+        }
+
+
+        //Log.d(TAG, "end of gmailTest()");
+
+    }
+
+    //Pour exportation depuis le bouton d'export vers fichier
+    String mainExportFileName = "mysmsbackup.txt";
+    public String getMainExportFilePath() {
+        File file = Environment.getExternalStorageDirectory();
+        String pathToMntSdCard = file.getPath();
+        String pathToLogFile = pathToMntSdCard + "/" + mainExportFileName;
+        return pathToLogFile;
+    }
+
+    //Pour exportation depuis le bouton d'export vers fichier
+    String mainExportFileNameForGmail = "mysmsbackupgm.txt";
+    public String getMainExportFilePathForGmail() {
+        File file = Environment.getExternalStorageDirectory();
+        String pathToMntSdCard = file.getPath();
+        String pathToLogFile = pathToMntSdCard + "/" + mainExportFileNameForGmail;
+        return pathToLogFile;
+    }
+
+    public void logToFile(String str) {
+        try {
+            File myFile = new File(getMainExportFilePath());
+            if (!myFile.exists()) {
+                myFile.createNewFile();
+            }
+
+            FileWriter fileWriter = new FileWriter(myFile, true);
+            BufferedWriter bufferedWriter = new BufferedWriter(fileWriter);
+            bufferedWriter.write(str + "\r\n");
+            bufferedWriter.close();
+            fileWriter.close();
+
+        } catch (Exception e) {
+        }
+    }
 
     // todo:faire le rapprochement avec TextBasedSmsColumns?
     private enum SMS_TYPE {
@@ -535,280 +880,4 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         return lstAndroidSms;
     }
 
-    public String getContactNameByPhoneNumber(String address) {
-        Uri uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(address));
-        Cursor cs = this.getContentResolver().query(uri, new String[]{ContactsContract.PhoneLookup.DISPLAY_NAME}, ContactsContract.PhoneLookup.NUMBER + "='" + address + "'", null, null);
-        String name = "";
-        if (cs.getCount() > 0) {
-            cs.moveToFirst();
-            name = cs.getString(cs.getColumnIndex(ContactsContract.PhoneLookup.DISPLAY_NAME));
-        }
-        cs.close();
-        return name;
-    }
-
-    private String convertMillisecondsToDate(String value) {
-        String finalDateString = "";
-        try {
-            long milliSeconds = Long.parseLong(value);
-            DateFormat formatter = new SimpleDateFormat("dd/MM/yyyy HH:mm:ss.SSS");
-            Calendar calendar = Calendar.getInstance();
-            calendar.setTimeInMillis(milliSeconds);
-            finalDateString = formatter.format(calendar.getTime());
-            //Log.d(TAG, "date parsed =" + finalDateString);
-        } catch (Exception pe) {
-            Log.d(TAG, "date parsing exception:" + pe.toString());
-        }
-        return finalDateString;
-    }
-
-    public String getContacts() {
-        String finalResult = "";
-        Cursor cursor = getContentResolver().query(ContactsContract.CommonDataKinds.Phone.CONTENT_URI, null, null, null, null);
-        while (cursor.moveToNext()) {
-            String name = cursor.getString(cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME));
-            String phoneNumber = cursor.getString(cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER));
-            finalResult += name + ";" + phoneNumber + "\r\n";
-        }
-        cursor.close();
-        return finalResult;
-    }
-
-    public void gmailTest(String currentSelectedEmail, String currentPassword) {
-
-        runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                btnExportToGmail.setEnabled(false);
-            }
-        });
-
-        Properties props = new Properties();
-        props.setProperty("mail.imap.host", "imap.gmail.com");
-        props.setProperty("mail.imap.port", "993");
-        props.setProperty("mail.imap.socketFactory.class", "javax.net.ssl.SSLSocketFactory");
-        props.setProperty("mail.imap.socketFactory.fallback", "false");
-        props.setProperty("mail.store.protocol", "imap");
-
-        Session session = Session.getInstance(props);
-        //session.setDebug(true);
-        try {
-            Store store = session.getStore("imap");
-            store.connect("imap.gmail.com", 993, currentSelectedEmail, currentPassword);
-
-            runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    showWaitDialog("Backup (Sync) to Gmail.", "Please wait while backup.");
-                }
-            });
-
-            boolean found = false;
-            Folder[] f = store.getDefaultFolder().list();
-            for (Folder fd : f) {
-                String folderName = fd.getFullName();
-                //Log.d(TAG, fd.getFullName());
-                if (folderName.equals("MySmsBackup")) {
-                    found = true;
-                    break;
-                }
-            }
-
-            if (!found) {
-                Log.d(TAG, "MySmsBackup folder has not been found.");
-                Log.d(TAG, "MySmsBackup folder will be created.");
-                boolean created = store.getDefaultFolder().getFolder("MySmsBackup").create(Folder.HOLDS_MESSAGES);
-                if (created)
-                    Log.d(TAG, "MySmsBackup folder has been created");
-            }
-
-            Message[] serverMessages = null;
-            Folder msb = null;
-            if (found) {
-                Log.d(TAG, "MySmsBackup folder has been found");
-
-                FetchProfile fp = new FetchProfile();
-                fp.add(FetchProfile.Item.CONTENT_INFO);
-                Log.d(TAG, "getting messages from server");
-                msb = store.getDefaultFolder().getFolder("MySmsBackup");
-                msb.open(Folder.READ_ONLY);
-                serverMessages = new MimeMessage[msb.getMessages().length];
-                serverMessages = msb.getMessages();
-                Log.d(TAG, "retrieved:" + serverMessages.length);
-                Log.d(TAG, "end of getting messages from server");
-            }
-
-            ArrayList<AndroidSms> lstAndroidSms = getSmsMessages(SMS_TYPE.SMS_SENT);
-            lstAndroidSms.addAll(getSmsMessages(SMS_TYPE.SMS_INBOX));
-            final int nbmsg = lstAndroidSms.size();
-
-            Collections.sort(lstAndroidSms, AndroidSms.compareByThreadId);
-            Collections.sort(lstAndroidSms, AndroidSms.compareByDate);
-            Collections.sort(lstAndroidSms, AndroidSms.compareByContactName);
-
-            Message[] messages = new MimeMessage[nbmsg];
-            final ArrayList<Integer> lstMsgIdToSync = new ArrayList<>();
-            for (int i = 0; i < nbmsg; i++) {
-                AndroidSms androidSms = lstAndroidSms.get(i);
-
-                String contactAddress = "";
-                if (getContactNameByPhoneNumber(androidSms.address).equals(""))
-                    contactAddress = androidSms.address;
-                else
-                    contactAddress = getContactNameByPhoneNumber(androidSms.address) + "_" + androidSms.address + "";
-
-                contactAddress = contactAddress.replace(' ', '_');
-                contactAddress = contactAddress.replace('+', '_');
-                contactAddress = contactAddress.replace("__", "_");
-                contactAddress = contactAddress + "@mysmsbackupapp.com";
-
-                Log.d(TAG, "contactAddress=" + contactAddress);
-
-                messages[i] = new MimeMessage(session);
-                if (androidSms.type.equals("1")) {
-                    messages[i].setFrom(new InternetAddress(contactAddress));
-                    messages[i].setRecipient(Message.RecipientType.TO, new InternetAddress(currentSelectedEmail));
-                } else if (androidSms.type.equals("2")) {
-                    messages[i].setFrom(new InternetAddress(currentSelectedEmail));
-                    messages[i].setRecipient(Message.RecipientType.TO, new InternetAddress(contactAddress));
-                }
-
-                messages[i].setSubject("SMS Conversation");
-
-                SimpleDateFormat simpleDateFormat = new SimpleDateFormat("dd/MM/yyyy HH:mm:ss.SSS");
-                Date dateSent;
-                try {
-                    dateSent = simpleDateFormat.parse(androidSms.date);
-                    messages[i].setSentDate(dateSent);
-                } catch (ParseException e) {
-                    e.printStackTrace();
-                }
-
-                messages[i].setText(androidSms.body);
-                Log.d(TAG, androidSms.body);
-
-                String uniqueId = androidSms.date + androidSms.address + getContactNameByPhoneNumber(androidSms.address);
-                Log.d(TAG, "uniqueid=" + uniqueId);
-                uniqueId = Base64.encodeToString(uniqueId.getBytes(), Base64.NO_PADDING+Base64.NO_WRAP);
-                Log.d(TAG, "uniqueid=" + uniqueId);
-
-                messages[i].addHeader("uniqueid", uniqueId);
-                Log.d(TAG, "uniqueid that will be searched : " + uniqueId);
-
-                boolean uniqueIdFoundOnServer = false;
-                for(int z=0;z<serverMessages.length;z++){
-                    String[] serverUniqueId = serverMessages[z].getHeader("uniqueid");
-                    if (serverUniqueId.length>0) {
-                        //Log.d(TAG, "uniqueId from server = " + serverUniqueId[0]);
-                        //Log.d(TAG, "uniqueId local       = " + uniqueId);
-                        if (serverUniqueId[0].equals(uniqueId)) {
-                            Log.d(TAG, "serverUniqueId equals uniqueId");
-                            uniqueIdFoundOnServer = true;
-                        }
-                    }
-                }
-
-                if (uniqueIdFoundOnServer) {
-                    Log.d(TAG, "* Message already on server, no upload needed for this one *");
-                } else {
-                    lstMsgIdToSync.add(i);
-                }
-            }
-
-            Log.d(TAG, "Will add " + lstMsgIdToSync.size() + " SMS to server");
-
-            msb.close(false);
-
-            Message[] messagesToSend = new MimeMessage[lstMsgIdToSync.size()];
-            for (int z=0;z<lstMsgIdToSync.size();z++){
-                messagesToSend[z] = messages[lstMsgIdToSync.get(z)];
-            }
-
-            getMmsMessages();
-
-            store.getDefaultFolder().getFolder("MySmsBackup").appendMessages(messagesToSend);
-
-            store.close();
-
-            runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    hideWaitDialog();
-                }
-            });
-
-            runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    showOkDialog("Backup to Gmail OK", lstMsgIdToSync.size() + " SMS have been backuped to Gmail.");
-                }
-            });
-
-            runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    btnExportToGmail.setEnabled(true);
-                }
-            });
-
-        } catch (Exception ex) {
-            Log.d(TAG, "001:" + ex.toString());
-            //ex.printStackTrace();
-
-            if (alertDialog != null)
-                runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        hideWaitDialog();
-                    }
-                });
-
-            final String ex2str = ex.toString();
-
-            runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    showOkDialog("Connection Error", "Please check your connection : " + ex2str.toString());
-                }
-            });
-
-            runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    btnExportToGmail.setEnabled(true);
-                }
-            });
-
-        }
-
-
-        //Log.d(TAG, "end of gmailTest()");
-
-    }
-
-    String mainLogFileName = "mysmsbackup.txt";
-
-    public String getMainLogFilePath() {
-        File file = Environment.getExternalStorageDirectory();
-        String pathToMntSdCard = file.getPath();
-        String pathToLogFile = pathToMntSdCard + "/" + mainLogFileName;
-        return pathToLogFile;
-    }
-
-    public void logToFile(String str) {
-        try {
-            File myFile = new File(getMainLogFilePath());
-            if (!myFile.exists()) {
-                myFile.createNewFile();
-            }
-
-            FileWriter fileWriter = new FileWriter(myFile, true);
-            BufferedWriter bufferedWriter = new BufferedWriter(fileWriter);
-            bufferedWriter.write(str + "\r\n");
-            bufferedWriter.close();
-            fileWriter.close();
-
-        } catch (Exception e) {
-        }
-    }
 }
