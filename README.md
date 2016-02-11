@@ -23,3 +23,9 @@ Il reste encore beaucoup de travail. Cette version est grosso-modo un draft de l
 développée dans les jours et semaines qui viennent.
 
 Autre fonctionnalité que je souhaite ajouter : Permettre la suppression des mots de passe Gmail stockés en base de données, ainsi que le cryptage de ces derniers.
+
+Mise à jour du 11/02/2016 : J'ai initié un projet similaire nommé MySmsBackup2, qui a exactement les mêmes fonctions que MySmsBackup mais qui exporte tous les SMS vers un seul fichier qui est ensuite envoyé dans un unique email vers le compte Gmail, ceci dans un soucis de rapidité des traitements. Pour rappel :
+- MySmsBackup créée un email sur Gmail pour chaque SMS reçu (création de plusieurs emails)
+- MySmsBackup2 créée un fichier qui est envoyé dans un unique email vers Gmail (création d'un seul email)
+
+
